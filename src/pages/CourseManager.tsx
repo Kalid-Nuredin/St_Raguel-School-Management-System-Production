@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, CheckCircle, XCircle, Eye, Search, Trash2, Plus, Target, Clock, Users, TrendingUp, Pencil, UserPlus, UserMinus, Upload } from 'lucide-react';
+import { BookOpen, CheckCircle, XCircle, Eye, Search, Trash2, Plus, Target, Clock, Users, TrendingUp, Pencil, UserPlus, UserMinus, Upload, Check } from 'lucide-react';
 import { courseService, FirestoreCourse, enrollmentService, userService } from '@/lib/firestore';
 import { Button } from '@/components/ui/button';
 import LoadingButton from '@/components/ui/loading-button';
@@ -39,6 +39,8 @@ export default function CourseManager() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [instructorFilter, setInstructorFilter] = useState<string>('all');
+  const [yearFilterForCourse, setYearFilterForCourse] = useState<string>('all');
   const [selectedCourse, setSelectedCourse] = useState<CourseWithApproval | null>(null);
   const [showCourseDialog, setShowCourseDialog] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -47,14 +49,14 @@ export default function CourseManager() {
   const [enrollTab, setEnrollTab] = useState<'manual'|'csv'>('manual');
   const [selectedCourseForEnroll, setSelectedCourseForEnroll] = useState<CourseWithApproval | null>(null);
   const [studentQuery, setStudentQuery] = useState('');
-  const [yearFilter, setYearFilter] = useState('');
+
   const [foundStudents, setFoundStudents] = useState<any[]>([]);
   const [csvText, setCsvText] = useState('');
   const [showUnenrollDialog, setShowUnenrollDialog] = useState(false);
   const [enrolledStudents, setEnrolledStudents] = useState<any[]>([]);
   const [createStep, setCreateStep] = useState<number>(1);
   const [totalEnrolledStudents, setTotalEnrolledStudents] = useState<number>(0);
-  const [showArchived, setShowArchived] = useState(false);
+
   const { currentUser } = useAuth();
 
   const [editForm, setEditForm] = useState<Partial<FirestoreCourse>>({});
@@ -65,7 +67,7 @@ export default function CourseManager() {
     duration: 8,
     maxStudents: 30 as any,
     syllabus: '',
-    isActive: userProfile?.role === 'admin',
+    isActive: true,
     year: toEthiopianDate(new Date()).year,
     semester: '',
     studentsYear: '',
@@ -83,11 +85,12 @@ export default function CourseManager() {
   const [importingCsv, setImportingCsv] = useState(false);
   const [unenrollingId, setUnenrollingId] = useState<string | null>(null);
   const [deletingCourseId, setDeletingCourseId] = useState<string | null>(null);
+  const [updatingCourseId, setUpdatingCourseId] = useState<string | null>(null);
   const [enrolledStudentIds, setEnrolledStudentIds] = useState<string[]>([]);
 
   // Calculate stats
   const totalCourses = courses.length;
-  const activeCourses = courses.filter(c => c.isActive).length;
+  const activeCourses = courses.filter(c => c.status === 'active').length;
   const totalStudents = totalEnrolledStudents;
 
   const navigate = useNavigate();
@@ -95,15 +98,13 @@ export default function CourseManager() {
   useEffect(() => {
     loadCourses();
     loadTeachers();
-  }, [showArchived]);
+  }, []);
 
   const loadCourses = async () => {
     try {
       setLoading(true);
 
-      const courses = showArchived 
-        ? await courseService.getAllCourses(1000)
-        : await courseService.getCourses(1000);
+      const courses = await courseService.getCourses(1000);
       setCourses(courses); // Added this line
       // compute total unique enrolled students across all courses
       try {
@@ -125,7 +126,7 @@ export default function CourseManager() {
   const loadTeachers = async () => {
     try {
       const teachersList = await userService.getTeachers();
-      setTeachers(teachersList);
+      setTeachers(teachersList.filter((teacher: any) => teacher.isActive));
     } catch (error) {
       console.error('Error loading teachers:', error);
       toast.error('Failed to load teachers');
@@ -144,6 +145,21 @@ export default function CourseManager() {
       toast.error('Failed to delete course');
     } finally {
       setDeletingCourseId(null);
+    }
+  };
+
+  const handleToggleCourseStatus = async (courseId: string, currentStatus: 'active' | 'finished') => {
+    try {
+      setUpdatingCourseId(courseId);
+      const newStatus = currentStatus === 'active' ? 'finished' : 'active';
+      await courseService.updateCourse(courseId, { status: newStatus });
+      toast.success(`Course marked as ${newStatus}`);
+      loadCourses(); // Refresh the list
+    } catch (error) {
+      console.error('Error updating course status:', error);
+      toast.error('Failed to update course status.');
+    } finally {
+      setUpdatingCourseId(null);
     }
   };
 
@@ -241,9 +257,8 @@ export default function CourseManager() {
         const matchesSearch = (u.displayName||'').toLowerCase().includes(q) || 
                              (u.email||'').toLowerCase().includes(q) || 
                              (u.id||'').toLowerCase().includes(q);
-        const matchesYear = yearFilter ? u.year === yearFilter : true;
         
-        return isStudent && isNotCurrentUser && matchesSearch && matchesYear;
+        return isStudent && isNotCurrentUser && matchesSearch;
       }).slice(0, 10);
       
       setFoundStudents(studentsOnly);
@@ -432,7 +447,6 @@ export default function CourseManager() {
         duration: editForm.duration,
         maxStudents: editForm.maxStudents,
         syllabus: editForm.syllabus,
-        isActive: editForm.isActive,
         instructor: editForm.instructor,
         instructorName: selectedTeacher.displayName || selectedTeacher.email || 'Instructor',
         prerequisite: editForm.prerequisite,
@@ -476,7 +490,7 @@ export default function CourseManager() {
 
   const startCreate = () => {
     setCreateForm({
-      title: '', description: '', category: '', duration: 8 as any, maxStudents: 30 as any, syllabus: '', isActive: userProfile?.role === 'admin', year: toEthiopianDate(new Date()).year, semester: ''
+      title: '', description: '', category: '', duration: 8 as any, maxStudents: 30 as any, syllabus: '', isActive: true, year: toEthiopianDate(new Date()).year, semester: ''
     });
     setSelectedInstructor('');
     setCreateStep(1);
@@ -556,7 +570,6 @@ export default function CourseManager() {
         duration: Number(createForm.duration || 1),
         maxStudents: Number(createForm.maxStudents || 1),
         syllabus: String(createForm.syllabus || ''),
-        isActive: !!createForm.isActive,
         instructor: selectedInstructor,
         instructorName: selectedTeacher.displayName || selectedTeacher.email || 'Instructor',
         prerequisite: String(createForm.prerequisite || ''),
@@ -576,11 +589,21 @@ export default function CourseManager() {
     }
   };
 
+  const uniqueInstructors = Array.from(new Set(courses.map(course => course.instructorName)));
+  const uniqueYears = Array.from(new Set(courses.map(course => course.year)));
+
   const filteredCourses = courses.filter(course => {
     const matchesSearch = course.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          course.instructorName.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = statusFilter === 'all' || course.status === statusFilter;
 
-    return matchesSearch;
+    const matchesInstructor = instructorFilter === 'all' || course.instructorName === instructorFilter;
+
+    const matchesYear = yearFilterForCourse === 'all' || 
+                        (course.year !== undefined && String(course.year) === yearFilterForCourse);
+
+    return matchesSearch && matchesStatus && matchesInstructor && matchesYear;
   });
 
   // Access control - only admins and super_admins can access
@@ -693,18 +716,40 @@ export default function CourseManager() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Status</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="finished">Finished</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-end">
-                <Button
-                  variant={showArchived ? "default" : "outline"}
-                  onClick={() => setShowArchived(!showArchived)}
-                  className="whitespace-nowrap"
-                >
-                  {showArchived ? "Hide Archived" : "Show Archived"}
-                </Button>
+              <div className="md:w-48">
+                <Label htmlFor="instructor" className="text-sm font-medium text-gray-700 mb-2 block">Instructor</Label>
+                <Select value={instructorFilter} onValueChange={setInstructorFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Instructors" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Instructors</SelectItem>
+                    {uniqueInstructors.map(instructor => (
+                      <SelectItem key={instructor} value={instructor}>{instructor}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+              <div className="md:w-48">
+                <Label htmlFor="year" className="text-sm font-medium text-gray-700 mb-2 block">Year</Label>
+                <Select value={yearFilterForCourse} onValueChange={setYearFilterForCourse}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Years" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Years</SelectItem>
+                    {uniqueYears.map(year => (
+                      <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
             </div>
           </CardContent>
         </Card>
@@ -713,13 +758,13 @@ export default function CourseManager() {
         <div className="grid gap-6">
           {filteredCourses.map((course) => (
 
-            <Card key={course.id} className="shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden">
+            <Card key={course.id} className={`shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden ${course.status === 'finished' ? 'bg-gray-100' : ''}`}>
               <CardContent className="p-6 h-full">
 
                 <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-start gap-4">
-                      <div className="w-16 h-16 bg-gradient-to-br from-green-400 to-green-600 rounded-xl flex items-center justify-center shadow-md flex-shrink-0">
+                      <div className={`w-16 h-16 bg-gradient-to-br ${course.status === 'finished' ? 'from-gray-400 to-gray-600' : 'from-green-400 to-green-600'} rounded-xl flex items-center justify-center shadow-md flex-shrink-0`}>
                         <BookOpen className="h-8 w-8 text-white" />
                       </div>
 
@@ -752,12 +797,22 @@ export default function CourseManager() {
                   <div className="flex flex-col sm:flex-row items-center gap-3 flex-shrink-0">
                     <Badge 
                       variant="outline" 
-                      className={`px-3 py-1 text-sm font-medium ${course.isActive ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}
+                      className={`px-3 py-1 text-sm font-medium ${course.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}
                     >
-                      {course.isActive ? 'Active' : 'Pending Approval'}
+                      {course.status === 'active' ? 'Active' : 'Finished'}
                     </Badge>
                     
                     <div className="flex items-center gap-2">
+                      <LoadingButton
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleToggleCourseStatus(course.id, course.status)}
+                        loading={updatingCourseId === course.id}
+                        disabled={userProfile?.role !== 'admin'}
+                      >
+                        {course.status === 'active' ? <XCircle className="h-4 w-4 mr-1" /> : <Check className="h-4 w-4 mr-1" />}
+                        {course.status === 'active' ? 'Finish' : 'Activate'}
+                      </LoadingButton>
                       <Button
                         variant="outline"
                         size="sm"
@@ -791,7 +846,7 @@ export default function CourseManager() {
                       
                       
                       
-                      {course.isActive && (
+                      
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button
@@ -807,7 +862,7 @@ export default function CourseManager() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>Delete Course</AlertDialogTitle>
                               <AlertDialogDescription>
-                                Are you sure you want to delete "{course.title}"? This action cannot be undone.
+                                Are you sure you want to delete "{course.title}"? This will permanently delete the course and all of its content. This action cannot be undone.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
@@ -822,7 +877,7 @@ export default function CourseManager() {
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
-                      )}
+                      
                     </div>
                   </div>
                 </div>
@@ -1081,21 +1136,6 @@ export default function CourseManager() {
               </Select>
             </div>
             <div>
-              <Label htmlFor="isActive">Status</Label>
-              <Select 
-                value={String(editForm.isActive || false)} 
-                onValueChange={(value) => setEditForm({ ...editForm, isActive: value === 'true' })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="true">Active</SelectItem>
-                  <SelectItem value="false">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
               <Label htmlFor="desc">Description</Label>
               <Textarea 
                 id="desc" 
@@ -1142,18 +1182,7 @@ export default function CourseManager() {
                   <Label>Search student (name/email/id)</Label>
                   <div className="flex gap-2">
                     <Input value={studentQuery} onChange={(e) => setStudentQuery(e.target.value)} placeholder="john@school.edu or user id" />
-                    <Select value={yearFilter} onValueChange={(value) => setYearFilter(value === '__ALL__' ? '' : value)}>
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Filter by Year" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__ALL__">All Years</SelectItem>
-                        <SelectItem value="1st Year">1st Year</SelectItem>
-                        <SelectItem value="2nd Year">2nd Year</SelectItem>
-                        <SelectItem value="3rd Year">3rd Year</SelectItem>
-                        <SelectItem value="4th Year">4th Year</SelectItem>
-                      </SelectContent>
-                    </Select>
+
                     <Button onClick={searchStudents}>Search</Button>
                   </div>
                   <div className="space-y-2 max-h-80 overflow-auto">
